@@ -46,21 +46,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Free disk space
-        shell: pwsh
-        run: |
-          Write-Host "Free space before:"
-          Get-PSDrive C
-
-          Remove-Item -Recurse -Force "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "C:\Program Files\Android" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "$env:TEMP\*" -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force "C:\Windows\Temp\*" -ErrorAction SilentlyContinue
-
-          Write-Host "Free space after:"
-          Get-PSDrive C
-
       - name: Resolve configuration
         id: config
         shell: pwsh
