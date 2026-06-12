@@ -143,12 +143,11 @@ function Test-FeatureOverride {
     }
 
     if ($imageDefaultState -eq 2) {
-        Add-Result $ControlSet 'Low Latency Profile result' 'PASS' 'Feature is already enabled by ImageDefault (0); User (8) is not required.'
-        return $true
+        Add-Result $ControlSet 'Image default policy' 'INFO' 'Feature is enabled by ImageDefault (0); the User (8) override is still required for an installation-independent result.'
     }
 
     if (-not (Test-Path -LiteralPath $userOverridePath)) {
-        Add-Result $ControlSet 'User override' 'FAIL' 'User (8) override is required but absent.'
+        Add-Result $ControlSet 'User override' 'FAIL' 'User (8) override is required for an installation-independent result but is absent.'
         return $false
     }
 

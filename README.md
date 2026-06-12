@@ -53,11 +53,9 @@ Control\FeatureManagement\Overrides\0\1213986446
 Control\FeatureManagement\Overrides\8\1213986446
 ```
 
-The expected result is:
-
-- When `ImageDefault (0)` is already enabled (`EnabledState=2`), a user
-  override is not required.
-- Otherwise, `User (8)` must contain five DWORD values:
+The image-default state is reported for diagnostics. Regardless of whether
+`ImageDefault (0)` is already enabled, `User (8)` must contain five DWORD
+values so the result does not depend on rollout state after installation:
 
 ```text
 EnabledState        = 2
