@@ -1,0 +1,176 @@
+name: Test Windows ISO
+
+run-name: >-
+  Offline ISO test
+  ${{ inputs.artifact_name && format('- {0}', inputs.artifact_name) || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_url:
+        description: "Direct ZIP URL or GitHub Actions run/artifact URL; can use ISO_ARCHIVE_URL secret instead"
+        type: string
+        required: false
+      artifact_name:
+        description: "Artifact name when a GitHub Actions run contains multiple artifacts"
+        type: string
+        required: false
+      iso_pattern:
+        description: "ISO filename pattern inside the archive"
+        type: string
+        required: true
+        default: "*.iso"
+      image_index:
+        description: "install.wim/install.esd image index to inspect"
+        type: string
+        required: true
+        default: "1"
+      expected_sha256:
+        description: "Expected ISO SHA256; optional when the archive contains a .sha256 file"
+        type: string
+        required: false
+      require_low_latency_profile:
+        description: "Fail when feature 58989092 definition is absent"
+        type: boolean
+        required: true
+        default: true
+
+jobs:
+  test:
+    runs-on: windows-2025
+    timeout-minutes: 180
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Free disk space
+        shell: pwsh
+        run: |
+          Write-Host "Free space before:"
+          Get-PSDrive C
+
+          Remove-Item -Recurse -Force "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\Program Files (x86)\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\Program Files\Android" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "$env:TEMP\*" -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force "C:\Windows\Temp\*" -ErrorAction SilentlyContinue
+
+          Write-Host "Free space after:"
+          Get-PSDrive C
+
+      - name: Resolve configuration
+        id: config
+        shell: pwsh
+        env:
+          INPUT_ARCHIVE_URL: ${{ inputs.archive_url }}
+          SECRET_ARCHIVE_URL: ${{ secrets.ISO_ARCHIVE_URL }}
+          INPUT_IMAGE_INDEX: ${{ inputs.image_index }}
+        run: |
+          $archiveUrl = if (-not [string]::IsNullOrWhiteSpace($env:INPUT_ARCHIVE_URL)) {
+            $env:INPUT_ARCHIVE_URL
+          } else {
+            $env:SECRET_ARCHIVE_URL
+          }
+
+          if ([string]::IsNullOrWhiteSpace($archiveUrl)) {
+            throw "Set archive_url or the ISO_ARCHIVE_URL repository secret."
+          }
+
+          $imageIndex = 0
+          if (-not [int]::TryParse($env:INPUT_IMAGE_INDEX, [ref]$imageIndex) -or $imageIndex -lt 1) {
+            throw "image_index must be a positive integer."
+          }
+
+          "image_index=$imageIndex" >> $env:GITHUB_OUTPUT
+
+      - name: Download build archive
+        shell: pwsh
+        env:
+          INPUT_ARCHIVE_URL: ${{ inputs.archive_url }}
+          SECRET_ARCHIVE_URL: ${{ secrets.ISO_ARCHIVE_URL }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          SOURCE_GITHUB_TOKEN: ${{ secrets.SOURCE_GITHUB_TOKEN }}
+        run: |
+          $workDirectory = "C:\iso-test-work"
+          New-Item -ItemType Directory -Force -Path $workDirectory | Out-Null
+
+          $archiveUrl = if (-not [string]::IsNullOrWhiteSpace($env:INPUT_ARCHIVE_URL)) {
+            $env:INPUT_ARCHIVE_URL
+          } else {
+            $env:SECRET_ARCHIVE_URL
+          }
+
+          .\scripts\Download-BuildArtifact.ps1 `
+            -Url $archiveUrl `
+            -DestinationPath "$workDirectory\artifact.zip" `
+            -ArtifactName $env:ARTIFACT_NAME `
+            -GitHubToken $env:SOURCE_GITHUB_TOKEN
+
+      - name: Verify and extract archive
+        shell: pwsh
+        env:
+          ISO_PATTERN: ${{ inputs.iso_pattern }}
+        run: |
+          $workDirectory = "C:\iso-test-work"
+          $archivePath = "$workDirectory\artifact.zip"
+          $extractDirectory = "$workDirectory\artifact"
+
+          & 7z.exe t $archivePath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Archive integrity test failed with exit code $LASTEXITCODE."
+          }
+
+          New-Item -ItemType Directory -Force -Path $extractDirectory | Out-Null
+          & 7z.exe x $archivePath "-o$extractDirectory" -y
+          if ($LASTEXITCODE -ne 0) {
+            throw "Archive extraction failed with exit code $LASTEXITCODE."
+          }
+
+          Remove-Item -LiteralPath $archivePath -Force
+
+          $isoFiles = @(
+            Get-ChildItem -LiteralPath $extractDirectory -Filter $env:ISO_PATTERN -File -Recurse
+          )
+
+          if ($isoFiles.Count -eq 0) {
+            throw "No ISO matched pattern '$env:ISO_PATTERN'."
+          }
+          if ($isoFiles.Count -gt 1) {
+            throw "Multiple ISOs matched pattern '$env:ISO_PATTERN': $($isoFiles.FullName -join ', ')"
+          }
+
+          "ISO_PATH=$($isoFiles[0].FullName)" >> $env:GITHUB_ENV
+          Write-Host "Selected ISO: $($isoFiles[0].Name)"
+
+      - name: Test final offline image
+        shell: pwsh
+        env:
+          IMAGE_INDEX: ${{ steps.config.outputs.image_index }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          REQUIRE_LLP: ${{ inputs.require_low_latency_profile }}
+        run: |
+          $splat = @{
+            IsoPath         = $env:ISO_PATH
+            ImageIndex      = [int]$env:IMAGE_INDEX
+            ExpectedSha256  = $env:EXPECTED_SHA256
+            WorkDirectory   = "C:\iso-test-work\inspection"
+            ReportDirectory = "$env:GITHUB_WORKSPACE\test-output"
+          }
+
+          if ($env:REQUIRE_LLP -eq 'true') {
+            $splat.RequireLowLatencyProfile = $true
+          }
+
+          .\scripts\Test-WindowsIso.ps1 @splat
+
+      - name: Upload test report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-iso-test-report
+          path: test-output/
+          if-no-files-found: warn
+          retention-days: 30

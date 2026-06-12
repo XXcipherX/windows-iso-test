@@ -1,0 +1,6 @@
+test-output/
+*.zip
+*.iso
+*.wim
+*.esd
+*.log
