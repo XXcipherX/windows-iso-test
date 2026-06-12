@@ -76,6 +76,34 @@ function Get-ChecksumFromFile {
     return $null
 }
 
+function Get-ImageSelectionDetails {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Image,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Index
+    )
+
+    $details = [System.Collections.Generic.List[string]]::new()
+    $details.Add("Index $Index")
+
+    $optionalProperties = [ordered]@{
+        ImageName    = 'name'
+        EditionId    = 'edition'
+        Architecture = 'architecture'
+    }
+
+    foreach ($entry in $optionalProperties.GetEnumerator()) {
+        $property = $Image.PSObject.Properties[$entry.Key]
+        if ($property -and $null -ne $property.Value -and -not [string]::IsNullOrWhiteSpace("$($property.Value)")) {
+            $details.Add("$($entry.Value) $($property.Value)")
+        }
+    }
+
+    return $details -join ', '
+}
+
 function Test-FeatureOverride {
     param(
         [Parameter(Mandatory = $true)]
@@ -292,7 +320,8 @@ try {
         throw "Image index ${ImageIndex} does not exist. Available indexes: $availableIndexes"
     }
 
-    Add-Result 'Image' 'Selection' 'PASS' "Index ${ImageIndex}: $($selectedImage.ImageName), architecture $($selectedImage.Architecture)."
+    $imageSelectionDetails = Get-ImageSelectionDetails -Image $selectedImage -Index $ImageIndex
+    Add-Result 'Image' 'Selection' 'PASS' $imageSelectionDetails
 
     if ($sourceImagePath -eq $esdPath) {
         Add-Result 'Image' 'ESD export' 'INFO' 'Exporting the selected ESD image to a temporary WIM for read-only inspection.'
